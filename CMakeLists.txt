@@ -1,11 +1,15 @@
 cmake_minimum_required(VERSION 3.16)
-project(bog LANGUAGES C)
+project(bog LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(BOG_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/bog)
+set(RTMIDI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/rtmidi-6.0.0)
 
 set(CORE_SOURCES
     ${BOG_DIR}/builtins.c
@@ -25,7 +29,35 @@ add_executable(bog_cli src/main.c)
 target_link_libraries(bog_cli PRIVATE bog)
 set_target_properties(bog_cli PROPERTIES OUTPUT_NAME bog)
 
-install(TARGETS bog bog_cli)
+add_library(rtmidi STATIC
+    ${RTMIDI_DIR}/RtMidi.cpp
+)
+target_include_directories(rtmidi PUBLIC ${RTMIDI_DIR})
+target_compile_features(rtmidi PRIVATE cxx_std_17)
+
+if (APPLE)
+    target_compile_definitions(rtmidi PUBLIC __MACOSX_CORE__)
+    find_library(COREAUDIO_LIBRARY CoreAudio REQUIRED)
+    find_library(COREMIDI_LIBRARY CoreMIDI REQUIRED)
+    find_library(COREFOUNDATION_LIBRARY CoreFoundation REQUIRED)
+    target_link_libraries(rtmidi PUBLIC
+        ${COREAUDIO_LIBRARY}
+        ${COREMIDI_LIBRARY}
+        ${COREFOUNDATION_LIBRARY}
+    )
+elseif (WIN32)
+    target_compile_definitions(rtmidi PUBLIC __WINDOWS_MM__)
+    target_link_libraries(rtmidi PUBLIC winmm)
+else()
+    find_package(ALSA REQUIRED)
+    target_compile_definitions(rtmidi PUBLIC __LINUX_ALSA__)
+    target_link_libraries(rtmidi PUBLIC ALSA::ALSA pthread)
+endif()
+
+add_executable(bog_midi src/main_midi.cpp)
+target_link_libraries(bog_midi PRIVATE bog rtmidi)
+
+install(TARGETS bog bog_cli bog_midi)
 
 # Tests
 enable_testing()
