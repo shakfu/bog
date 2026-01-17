@@ -248,9 +248,15 @@ static void tokenize_source(const char* src, TokenVec* out,
         }
         if (isdigit((unsigned char)c)) {
             size_t start = i++;
-            while (i < len
-                   && (isdigit((unsigned char)src[i]) || src[i] == '.'))
+            while (i < len && isdigit((unsigned char)src[i]))
                 i++;
+            /* consume decimal point only if followed by a digit */
+            if (i < len && src[i] == '.' && i + 1 < len
+                && isdigit((unsigned char)src[i + 1])) {
+                i++;
+                while (i < len && isdigit((unsigned char)src[i]))
+                    i++;
+            }
             char buf[64];
             size_t seg = i - start;
             if (seg >= sizeof(buf)) {

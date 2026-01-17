@@ -102,7 +102,8 @@ static void print_solution(size_t index, const BogEnv* env,
         const char* name = env->items[i].name;
         if (!should_print_binding(name))
             continue;
-        char* value = bog_term_to_string(env->items[i].value, arena);
+        BogTerm* resolved = bog_subst_term(env->items[i].value, env, arena);
+        char* value = bog_term_to_string(resolved, arena);
         if (printed)
             printf(", ");
         printf("%s = %s", name, value ? value : "<error>");

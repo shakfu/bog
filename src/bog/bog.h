@@ -137,6 +137,17 @@ BogBuiltins* bog_create_builtins(BogArena* arena);
 const BogBuiltin* bog_find_builtin(const BogBuiltins* builtins,
                                            const char* name);
 
+/* Term construction */
+BogTerm* bog_make_num(BogArena* arena, double value);
+BogTerm* bog_make_atom(BogArena* arena, const char* name);
+BogTerm* bog_make_var(BogArena* arena, const char* name);
+BogTerm* bog_make_compound(BogArena* arena, const char* functor,
+                           BogTerm** args, size_t arity);
+BogTerm* bog_make_list(BogArena* arena, BogTerm** items,
+                       size_t length, BogTerm* tail);
+BogTerm* bog_make_expr(BogArena* arena, char op, BogTerm* left,
+                       BogTerm* right);
+
 /* Term helpers */
 BogTerm* bog_subst_term(BogTerm* term, const BogEnv* env,
                                 BogArena* arena);
