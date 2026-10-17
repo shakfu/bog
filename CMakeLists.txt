@@ -7,6 +7,8 @@ set(CMAKE_C_EXTENSIONS OFF)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+# Strict C11 hides strdup, getline and ssize_t; request POSIX.1-2008
+add_compile_definitions($<$<COMPILE_LANGUAGE:C>:_POSIX_C_SOURCE=200809L>)
 
 set(BOG_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/bog)
 set(RTMIDI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/rtmidi-6.0.0)
@@ -93,3 +95,8 @@ add_executable(test_livecoding ${TEST_DIR}/test_livecoding.c)
 target_link_libraries(test_livecoding PRIVATE bog)
 target_include_directories(test_livecoding PRIVATE ${TEST_DIR})
 add_test(NAME livecoding COMMAND test_livecoding)
+
+add_executable(test_scheduler ${TEST_DIR}/test_scheduler.c)
+target_link_libraries(test_scheduler PRIVATE bog)
+target_include_directories(test_scheduler PRIVATE ${TEST_DIR})
+add_test(NAME scheduler COMMAND test_scheduler)

@@ -155,10 +155,16 @@ char* bog_term_to_string(const BogTerm* term, BogArena* arena);
 bool bog_unify(BogTerm* a, BogTerm* b, BogEnv* env,
                    BogArena* arena);
 
+/* Resolution limits. A query that hits one stops and sets truncated. */
+#define BOG_MAX_DEPTH 512        /* nested resolution calls (C stack) */
+#define BOG_MAX_STEPS 20000      /* goal resolutions per query (time) */
+#define BOG_MAX_SOLUTIONS 1024   /* solutions per query (memory) */
+
 /* Resolution */
 typedef struct {
     BogEnv* envs;
     size_t count;
+    bool truncated;     /* a resolution limit stopped the query */
 } BogSolutions;
 
 void bog_resolve(const BogGoalList* goals, BogEnv* env,

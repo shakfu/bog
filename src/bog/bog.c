@@ -1255,6 +1255,10 @@ bool bog_unify(BogTerm* a, BogTerm* b, BogEnv* env,
 {
     BogTerm* left = bog_subst_term(a, env, arena);
     BogTerm* right = bog_subst_term(b, env, arena);
+    /* Binding a variable to itself would make substitution loop forever */
+    if (left->type == CPROLOG_TERM_VAR && right->type == CPROLOG_TERM_VAR
+        && strcmp(left->value.atom, right->value.atom) == 0)
+        return true;
     if (left->type == CPROLOG_TERM_VAR) {
         bog_env_set(env, left->value.atom, right);
         return true;
@@ -1351,19 +1355,30 @@ static bool unify_lists(BogTerm* left, BogTerm* right, BogEnv* env,
 
 /* ---------------- Resolution ---------------- */
 
+/* Shared by one query, including negated sub-queries */
+typedef struct {
+    size_t steps;
+    size_t rename_counter; /* per query, so each clause use gets fresh vars */
+    bool exhausted; /* depth or step limit hit: abandon the whole query */
+} ResolveBudget;
+
 static void resolve_internal(const BogGoalList* goals, size_t index,
                              BogEnv* env, const BogProgram* program,
                              const BogContext* ctx,
                              const BogBuiltins* builtins,
-                             BogSolutions* solutions, BogArena* arena);
+                             BogSolutions* solutions, BogArena* arena,
+                             ResolveBudget* budget,
+                             size_t depth);
 
 static bool goal_succeeds(const BogGoalList* goals, BogEnv* env,
                           const BogProgram* program,
                           const BogContext* ctx,
-                          const BogBuiltins* builtins, BogArena* arena)
+                          const BogBuiltins* builtins, BogArena* arena,
+                          ResolveBudget* budget, size_t depth)
 {
     BogSolutions temp = { 0 };
-    resolve_internal(goals, 0, env, program, ctx, builtins, &temp, arena);
+    resolve_internal(goals, 0, env, program, ctx, builtins, &temp, arena,
+                     budget, depth);
     for (size_t i = 0; i < temp.count; ++i) {
         bog_env_free(&temp.envs[i]);
     }
@@ -1377,6 +1392,8 @@ static void push_solution(BogSolutions* solutions, const BogEnv* env)
     solutions->envs = (BogEnv*)realloc(
         solutions->envs, sizeof(BogEnv) * (solutions->count + 1));
     solutions->envs[solutions->count++] = copy;
+    if (solutions->count >= BOG_MAX_SOLUTIONS)
+        solutions->truncated = true;
 }
 
 static void resolve_builtin(const BogGoal* goal, size_t next_index,
@@ -1384,7 +1401,9 @@ static void resolve_builtin(const BogGoal* goal, size_t next_index,
                             const BogProgram* program,
                             const BogContext* ctx,
                             const BogBuiltins* builtins,
-                            BogSolutions* solutions, BogArena* arena)
+                            BogSolutions* solutions, BogArena* arena,
+                            ResolveBudget* budget,
+                            size_t depth)
 {
     BogTerm* term = goal->data.term;
     const BogBuiltin* builtin = bog_find_builtin(
@@ -1396,7 +1415,7 @@ static void resolve_builtin(const BogGoal* goal, size_t next_index,
                 ctx, &result, arena);
     for (size_t i = 0; i < result.count; ++i) {
         resolve_internal(goals, next_index, &result.envs[i], program, ctx,
-                         builtins, solutions, arena);
+                         builtins, solutions, arena, budget, depth + 1);
         bog_env_free(&result.envs[i]);
     }
     free(result.envs);
@@ -1406,8 +1425,16 @@ static void resolve_internal(const BogGoalList* goals, size_t index,
                              BogEnv* env, const BogProgram* program,
                              const BogContext* ctx,
                              const BogBuiltins* builtins,
-                             BogSolutions* solutions, BogArena* arena)
+                             BogSolutions* solutions, BogArena* arena,
+                             ResolveBudget* budget,
+                             size_t depth)
 {
+    if (budget->exhausted || solutions->truncated)
+        return;
+    if (depth >= BOG_MAX_DEPTH || ++budget->steps > BOG_MAX_STEPS) {
+        budget->exhausted = true;
+        return;
+    }
     if (index >= goals->count) {
         push_solution(solutions, env);
         return;
@@ -1418,16 +1445,17 @@ static void resolve_internal(const BogGoalList* goals, size_t index,
         for (size_t b = 0; b < goal.data.neg.count; ++b) {
             BogEnv tmp = bog_env_clone(env);
             if (goal_succeeds(&goal.data.neg.branches[b], &tmp, program, ctx,
-                              builtins, arena)) {
+                              builtins, arena, budget, depth + 1)) {
                 succeeded = true;
             }
             bog_env_free(&tmp);
             if (succeeded)
                 break;
         }
-        if (!succeeded) {
+        /* An exhausted sub-query proves nothing; do not treat it as failure */
+        if (!succeeded && !budget->exhausted) {
             resolve_internal(goals, index + 1, env, program, ctx, builtins,
-                             solutions, arena);
+                             solutions, arena, budget, depth + 1);
         }
         return;
     }
@@ -1436,14 +1464,16 @@ static void resolve_internal(const BogGoalList* goals, size_t index,
             builtins, goal.data.term->value.compound.functor);
         if (builtin) {
             resolve_builtin(&goal, index + 1, env, goals, program, ctx,
-                            builtins, solutions, arena);
+                            builtins, solutions, arena, budget, depth);
             return;
         }
     }
-    size_t counter = 0;
     for (size_t i = 0; i < program->count; ++i) {
+        if (budget->exhausted || solutions->truncated)
+            return;
         BogClause renamed;
-        bog_rename_clause(&program->clauses[i], &renamed, &counter, arena);
+        bog_rename_clause(&program->clauses[i], &renamed,
+                          &budget->rename_counter, arena);
         BogEnv tmp = bog_env_clone(env);
         if (!bog_unify(goal.data.term, renamed.head, &tmp, arena)) {
             bog_env_free(&tmp);
@@ -1463,7 +1493,7 @@ static void resolve_internal(const BogGoalList* goals, size_t index,
                    sizeof(BogGoal) * (goals->count - index - 1));
         }
         resolve_internal(&combined, 0, &tmp, program, ctx, builtins, solutions,
-                         arena);
+                         arena, budget, depth + 1);
         bog_env_free(&tmp);
     }
 }
@@ -1475,5 +1505,10 @@ void bog_resolve(const BogGoalList* goals, BogEnv* env,
 {
     solutions->envs = NULL;
     solutions->count = 0;
-    resolve_internal(goals, 0, env, program, ctx, builtins, solutions, arena);
+    solutions->truncated = false;
+    ResolveBudget budget = { 0, 0, false };
+    resolve_internal(goals, 0, env, program, ctx, builtins, solutions, arena,
+                     &budget, 0);
+    if (budget.exhausted)
+        solutions->truncated = true;
 }
