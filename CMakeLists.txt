@@ -88,6 +88,10 @@ add_test(NAME state_manager COMMAND test_state_manager)
 
 add_executable(test_resolution ${TEST_DIR}/test_resolution.c)
 target_link_libraries(test_resolution PRIVATE bog)
+if (UNIX)
+    find_package(Threads REQUIRED)
+    target_link_libraries(test_resolution PRIVATE Threads::Threads)
+endif()
 target_include_directories(test_resolution PRIVATE ${TEST_DIR})
 add_test(NAME resolution COMMAND test_resolution)
 

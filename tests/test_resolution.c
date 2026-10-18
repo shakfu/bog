@@ -3,6 +3,10 @@
  */
 #include "test_framework.h"
 
+#ifndef _WIN32
+#include <pthread.h>
+#endif
+
 #include "bog.h"
 #include "builtins.h"
 
@@ -346,6 +350,52 @@ TEST(resolution_allows_bounded_recursion)
     TEST_PASS();
 }
 
+#ifndef _WIN32
+typedef struct {
+    const char* program;
+    const char* query;
+    BogSolutions solutions;
+} ThreadQuery;
+
+static void* run_thread_query(void* arg)
+{
+    ThreadQuery* q = (ThreadQuery*)arg;
+    q->solutions = run_query(q->program, q->query);
+    return NULL;
+}
+
+/* Resolve on a thread with BOG_MIN_STACK_SIZE; overflow crashes the test */
+static BogSolutions run_query_on_min_stack(const char* program_src,
+                                           const char* query_src)
+{
+    ThreadQuery q = { program_src, query_src, { 0 } };
+    pthread_attr_t attr;
+    pthread_t thread;
+    pthread_attr_init(&attr);
+    pthread_attr_setstacksize(&attr, BOG_MIN_STACK_SIZE);
+    if (pthread_create(&thread, &attr, run_thread_query, &q) == 0)
+        pthread_join(thread, NULL);
+    pthread_attr_destroy(&attr);
+    return q.solutions;
+}
+
+TEST(resolution_depth_limit_fits_min_stack)
+{
+    BogSolutions s = run_query_on_min_stack(
+        "event(V, P, X, T) :- event(V, P, X, T).",
+        "__q :- event(V, P, X, 1.0).");
+    ASSERT(s.truncated);
+    free_solutions(&s);
+    /* Builtin goals add the most stack per depth level */
+    s = run_query_on_min_stack(
+        "loop(N) :- N >= 0, N >= 0, N >= 0, N >= 0, N >= 0, N >= 0, loop(N).",
+        "__q :- loop(0).");
+    ASSERT(s.truncated);
+    free_solutions(&s);
+    TEST_PASS();
+}
+#endif
+
 TEST(resolution_exhausted_negation_does_not_succeed)
 {
     /* \+ over a runaway goal must not prove the negation */
@@ -373,6 +423,9 @@ int main(void)
     RUN_TEST(resolution_caps_solution_count);
     RUN_TEST(resolution_allows_bounded_recursion);
     RUN_TEST(resolution_exhausted_negation_does_not_succeed);
+#ifndef _WIN32
+    RUN_TEST(resolution_depth_limit_fits_min_stack);
+#endif
 
     TEST_SUMMARY();
     return TEST_EXIT_CODE();

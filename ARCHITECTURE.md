@@ -189,9 +189,9 @@ double midi_get_time(void* userdata) {
 }
 ```
 
-### Step 4: Implement Voice Callbacks
+### Step 4: Implement the Note Callback
 
-Map bog voices to MIDI:
+The `note` callback receives every event with its voice name. Map each voice to MIDI:
 
 ```c
 // Helper to send MIDI note
@@ -212,39 +212,34 @@ static void send_note(MidiContext* ctx, int channel, int note,
     Pm_Write(ctx->stream, &event, 1);
 }
 
-// Drum voices - use GM drum map on channel 10
-void midi_kick(void* userdata, double time, double velocity) {
-    MidiContext* ctx = (MidiContext*)userdata;
-    send_note(ctx, 9, 36, (int)(velocity * 127), time);  // GM kick
+// GM drum notes for drum voices; -1 for any other voice
+static int drum_note(const char* voice) {
+    static const struct { const char* name; int note; } drums[] = {
+        { "kick", 36 }, { "snare", 38 }, { "hat", 42 },
+        { "clap", 39 }, { "noise", 46 },
+    };
+    for (size_t i = 0; i < sizeof(drums) / sizeof(drums[0]); ++i) {
+        if (strcmp(voice, drums[i].name) == 0)
+            return drums[i].note;
+    }
+    return -1;
 }
 
-void midi_snare(void* userdata, double time, double velocity) {
+// Drums on channel 10; every other voice plays its pitch on the synth channel
+void midi_note(void* userdata, const char* voice, double time,
+               double midi_note, double velocity) {
     MidiContext* ctx = (MidiContext*)userdata;
-    send_note(ctx, 9, 38, (int)(velocity * 127), time);  // GM snare
-}
-
-void midi_hat(void* userdata, double time, double velocity) {
-    MidiContext* ctx = (MidiContext*)userdata;
-    send_note(ctx, 9, 42, (int)(velocity * 127), time);  // Closed hi-hat
-}
-
-void midi_clap(void* userdata, double time, double velocity) {
-    MidiContext* ctx = (MidiContext*)userdata;
-    send_note(ctx, 9, 39, (int)(velocity * 127), time);  // Hand clap
-}
-
-// Melodic voices - pitch comes from the event
-void midi_sine(void* userdata, double time, double midi_note, double velocity) {
-    MidiContext* ctx = (MidiContext*)userdata;
-    send_note(ctx, ctx->synth_channel, (int)midi_note,
-              (int)(velocity * 127), time);
-}
-
-// Map other synth voices to different channels or same channel
-void midi_square(void* userdata, double time, double midi, double velocity) {
-    midi_sine(userdata, time, midi, velocity);  // Or use different channel
+    int drum = drum_note(voice);
+    if (drum >= 0)
+        send_note(ctx, ctx->drum_channel, drum, (int)(velocity * 127), time);
+    else
+        send_note(ctx, ctx->synth_channel, (int)midi_note,
+                  (int)(velocity * 127), time);
 }
 ```
+
+- `voice` is the voice term as text. It is freed after the call returns; copy it to keep it.
+- `bog_midi` (`src/main_midi.cpp`) is a complete RtMidi version.
 
 ### Step 5: Initialize and Run
 
@@ -267,14 +262,7 @@ int main(void) {
     BogAudioCallbacks callbacks = {
         .userdata = &midi_ctx,
         .time = midi_get_time,
-        .kick = midi_kick,
-        .snare = midi_snare,
-        .hat = midi_hat,
-        .clap = midi_clap,
-        .sine = midi_sine,
-        .square = midi_square,
-        .triangle = midi_sine,  // Reuse or differentiate
-        .noise = midi_hat,      // Map noise to percussion
+        .note = midi_note,
     };
 
     // Create bog components
@@ -326,14 +314,14 @@ For option 3, you'd modify the query in `scheduler_query_and_schedule()` to use 
 
 ### Step 7: Link Against Libraries
 
-Update CMakeLists.txt:
+Add a target to CMakeLists.txt. The name must differ from the existing RtMidi `bog_midi` target (`src/main_midi.cpp`):
 
 ```cmake
 find_library(PORTMIDI_LIB portmidi)
 find_library(PORTTIME_LIB porttime)
 
-add_executable(bog_midi src/main_midi.c)
-target_link_libraries(bog_midi PRIVATE bog ${PORTMIDI_LIB} ${PORTTIME_LIB})
+add_executable(bog_portmidi src/main_portmidi.c)
+target_link_libraries(bog_portmidi PRIVATE bog ${PORTMIDI_LIB} ${PORTTIME_LIB})
 ```
 
 ### GM Drum Map Reference
@@ -351,16 +339,9 @@ target_link_libraries(bog_midi PRIVATE bog ${PORTMIDI_LIB} ${PORTTIME_LIB})
 | 49 | Crash Cymbal |
 | 51 | Ride Cymbal |
 
-### Alternative: Generic Event Callback
+### Alternative: Named Callbacks
 
-If you want a simpler interface, you could add a generic callback to `BogAudioCallbacks`:
-
-```c
-void (*event)(void* userdata, const char* voice, double time,
-              double midi, double velocity);
-```
-
-Then in `trigger_voice()`, call this for all events, letting the backend decide how to handle each voice. This would require modifying `scheduler.c`.
+`BogAudioCallbacks` also has one callback per built-in voice: `kick`, `snare`, `hat`, `clap`, `noise`, `sine`, `square` and `triangle`. The scheduler uses them only when `note` is unset, and drops events for any other voice.
 
 ---
 

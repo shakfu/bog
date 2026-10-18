@@ -159,6 +159,9 @@ bool bog_unify(BogTerm* a, BogTerm* b, BogEnv* env,
 #define BOG_MAX_DEPTH 512        /* nested resolution calls (C stack) */
 #define BOG_MAX_STEPS 20000      /* goal resolutions per query (time) */
 #define BOG_MAX_SOLUTIONS 1024   /* solutions per query (memory) */
+/* Stack for a thread that resolves queries. BOG_MAX_DEPTH needs up to
+ * 240 KB unoptimized. */
+#define BOG_MIN_STACK_SIZE (512 * 1024)
 
 /* Resolution */
 typedef struct {

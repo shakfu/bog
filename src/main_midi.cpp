@@ -187,45 +187,34 @@ void midi_init(void* userdata)
     start_worker(ctx);
 }
 
-void midi_kick(void* userdata, double time_value, double velocity)
+// GM drum notes for the drum voices; any other voice plays its pitch on the
+// synth channel
+int drum_note(const char* voice)
 {
-    MidiContext* ctx = static_cast<MidiContext*>(userdata);
-    schedule_note(ctx, ctx->drum_channel, 36, velocity, time_value,
-                  ctx->drum_duration);
+    static const struct {
+        const char* name;
+        int note;
+    } drums[] = {
+        { "kick", 36 }, { "snare", 38 }, { "hat", 42 },
+        { "clap", 39 }, { "noise", 46 },
+    };
+    for (const auto& drum : drums) {
+        if (std::strcmp(voice, drum.name) == 0)
+            return drum.note;
+    }
+    return -1;
 }
 
-void midi_snare(void* userdata, double time_value, double velocity)
+void midi_note(void* userdata, const char* voice, double time_value,
+               double midi_note, double velocity)
 {
     MidiContext* ctx = static_cast<MidiContext*>(userdata);
-    schedule_note(ctx, ctx->drum_channel, 38, velocity, time_value,
-                  ctx->drum_duration);
-}
-
-void midi_hat(void* userdata, double time_value, double velocity)
-{
-    MidiContext* ctx = static_cast<MidiContext*>(userdata);
-    schedule_note(ctx, ctx->drum_channel, 42, velocity, time_value,
-                  ctx->drum_duration);
-}
-
-void midi_clap(void* userdata, double time_value, double velocity)
-{
-    MidiContext* ctx = static_cast<MidiContext*>(userdata);
-    schedule_note(ctx, ctx->drum_channel, 39, velocity, time_value,
-                  ctx->drum_duration);
-}
-
-void midi_noise(void* userdata, double time_value, double velocity)
-{
-    MidiContext* ctx = static_cast<MidiContext*>(userdata);
-    schedule_note(ctx, ctx->drum_channel, 46, velocity, time_value,
-                  ctx->drum_duration);
-}
-
-void midi_synth(void* userdata, double time_value, double midi_note,
-                double velocity)
-{
-    MidiContext* ctx = static_cast<MidiContext*>(userdata);
+    const int drum = drum_note(voice);
+    if (drum >= 0) {
+        schedule_note(ctx, ctx->drum_channel, drum, velocity, time_value,
+                      ctx->drum_duration);
+        return;
+    }
     schedule_note(ctx, ctx->synth_channel,
                   static_cast<int>(std::lround(midi_note)), velocity,
                   time_value, ctx->synth_duration);
@@ -365,14 +354,7 @@ int main(int argc, char** argv)
     callbacks.userdata = &midi_ctx;
     callbacks.init = midi_init;
     callbacks.time = midi_time;
-    callbacks.kick = midi_kick;
-    callbacks.snare = midi_snare;
-    callbacks.hat = midi_hat;
-    callbacks.clap = midi_clap;
-    callbacks.noise = midi_noise;
-    callbacks.sine = midi_synth;
-    callbacks.square = midi_synth;
-    callbacks.triangle = midi_synth;
+    callbacks.note = midi_note;
 
     BogScheduler* scheduler = bog_scheduler_create(
         &callbacks, builtins, state_mgr);
